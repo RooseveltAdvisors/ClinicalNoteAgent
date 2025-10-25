@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clinical Notes Agent</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏥 Clinical Notes Agent</h1>
+            <p>Transform unstructured clinical notes into actionable care plans</p>
+        </header>
+
+        <main>
+            <div class="upload-section">
+                <h2>Upload Clinical Note</h2>
+                <form id="uploadForm" enctype="multipart/form-data">
+                    <div class="file-input-wrapper">
+                        <input type="file" id="fileInput" name="file" accept=".txt,.md" required>
+                        <label for="fileInput" class="file-label">
+                            <span id="fileName">Choose file...</span>
+                        </label>
+                    </div>
+                    <button type="submit" class="btn-primary">Upload &amp; Process</button>
+                </form>
+
+                <div id="status" class="status-box" style="display: none;">
+                    <div class="status-content"></div>
+                </div>
+            </div>
+
+            <div class="info-section">
+                <h3>System Features</h3>
+                <ul>
+                    <li><strong>Table of Contents:</strong> Automatic section detection and navigation</li>
+                    <li><strong>Clinical Summary:</strong> Key information with source citations</li>
+                    <li><strong>Treatment Recommendations:</strong> Evidence-based care plans</li>
+                    <li><strong>Quality Validation:</strong> Iterative refinement for accuracy</li>
+                </ul>
+
+                <div class="tech-stack">
+                    <h4>Technology Stack</h4>
+                    <div class="badges">
+                        <span class="badge">gpt-oss:20b</span>
+                        <span class="badge">LangGraph</span>
+                        <span class="badge">Multi-GPU</span>
+                        <span class="badge">Local-First</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Real-time Agent Activity -->
+            <div id="activitySection" style="display: none; margin-top: 2rem;">
+                <h2>📊 Agent Activity (Real-time)</h2>
+                <div id="activityTimeline" class="timeline" style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; padding: 1rem; background: #f9f9f9; border-radius: 8px;"></div>
+            </div>
+
+            <!-- Results Section -->
+            <div id="resultsSection" style="display: none; margin-top: 2rem;">
+                <h2>📄 Processing Results</h2>
+                <div id="results" class="results-container"></div>
+            </div>
+        </main>
+
+        <footer>
+            <p>Clinical Notes Agent | Local Processing | No External APIs</p>
+        </footer>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const fileName = document.getElementById('fileName');
+        const uploadForm = document.getElementById('uploadForm');
+        const statusBox = document.getElementById('status');
+        const statusContent = statusBox.querySelector('.status-content');
+
+        let currentSessionId = null;
+        let activityPollInterval = null;
+        let resultsPollInterval = null;
+
+        // File input change handler
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                fileName.textContent = e.target.files[0].name;
+            }
+        });
+
+        // Form submission
+        uploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const formData = new FormData(uploadForm);
+
+            // Show status
+            statusBox.style.display = 'block';
+            statusContent.innerHTML = '<div class="spinner"></div><p>Uploading file...</p>';
+
+            try {
+                // Upload file
+                const uploadResponse = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const uploadData = await uploadResponse.json();
+
+                if (!uploadResponse.ok) {
+                    throw new Error(uploadData.error || 'Upload failed');
+                }
+
+                currentSessionId = uploadData.session_id;
+
+                statusContent.innerHTML = `
+                    <p>✓ File uploaded successfully</p>
+                    <p>Starting agent processing...</p>
+                    <div class="spinner"></div>
+                `;
+
+                // Show activity section and start polling
+                document.getElementById('activitySection').style.display = 'block';
+                startActivityPolling(currentSessionId);
+
+                // Start processing in background
+                fetch(`/process/${currentSessionId}`, {
+                    method: 'POST'
+                }).then(response => response.json())
+                .then(data => {
+                    // Processing complete
+                    statusContent.innerHTML = `
+                        <p>✓ Processing complete!</p>
+                        <p>Status: ${data.evaluation_status}</p>
+                        <p>Iterations: ${data.iteration_count}</p>
+                    `;
+                    stopActivityPolling();
+                    loadResults(currentSessionId);
+                }).catch(error => {
+                    statusContent.innerHTML = `<p class="error">✗ Processing error: ${error.message}</p>`;
+                    stopActivityPolling();
+                });
+
+            } catch (error) {
+                statusContent.innerHTML = `
+                    <p class="error">✗ Error: ${error.message}</p>
+                    <button onclick="location.reload()" class="btn-secondary">Try Again</button>
+                `;
+            }
+        });
+
+        // Poll for activity updates
+        function startActivityPolling(sessionId) {
+            // Initial load
+            fetchActivity(sessionId);
+
+            // Poll every 1 second
+            activityPollInterval = setInterval(() => {
+                fetchActivity(sessionId);
+            }, 1000);
+        }
+
+        function stopActivityPolling() {
+            if (activityPollInterval) {
+                clearInterval(activityPollInterval);
+                activityPollInterval = null;
+            }
+        }
+
+        async function fetchActivity(sessionId) {
+            try {
+                const response = await fetch(`/activity/${sessionId}`);
+                const data = await response.json();
+                renderActivity(data.activities || []);
+            } catch (error) {
+                console.error('Error fetching activity:', error);
+            }
+        }
+
+        function renderActivity(activities) {
+            const timeline = document.getElementById('activityTimeline');
+
+            if (activities.length === 0) {
+                timeline.innerHTML = '<p style="color: #666;">Waiting for agent activity...</p>';
+                return;
+            }
+
+            const agentColors = {
+                'System': '#6c757d',
+                'toc_agent': '#007bff',
+                'summary_agent': '#28a745',
+                'recommendation_agent': '#ffc107',
+                'evaluator_agent': '#dc3545'
+            };
+
+            timeline.innerHTML = activities.map(activity => {
+                const color = agentColors[activity.agent] || '#333';
+                const time = new Date(activity.timestamp).toLocaleTimeString();
+                const icon = activity.type === 'error' ? '❌' :
+                            activity.type === 'message' ? '💬' : '📝';
+
+                return `
+                    <div style="margin-bottom: 0.75rem; padding: 0.5rem; background: white; border-left: 3px solid ${color}; border-radius: 4px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
+                            <strong style="color: ${color};">${icon} ${activity.agent}</strong>
+                            <span style="font-size: 0.85em; color: #666;">${time}</span>
+                        </div>
+                        <div style="font-size: 0.9em;">${activity.content}</div>
+                    </div>
+                `;
+            }).join('');
+
+            // Auto-scroll to bottom
+            timeline.scrollTop = timeline.scrollHeight;
+        }
+
+        async function loadResults(sessionId) {
+            try {
+                const response = await fetch(`/results/${sessionId}`);
+                const data = await response.json();
+
+                document.getElementById('resultsSection').style.display = 'block';
+                renderResults(data);
+            } catch (error) {
+                console.error('Error loading results:', error);
+            }
+        }
+
+        function renderResults(data) {
+            const results = document.getElementById('results');
+
+            results.innerHTML = `
+                <div style="background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <h3>Status</h3>
+                    <p><strong>Evaluation:</strong> <span style="color: ${data.evaluation_status === 'pass' ? '#28a745' : '#ffc107'};">${data.evaluation_status || 'pending'}</span></p>
+                    <p><strong>Iterations:</strong> ${data.iteration_count || 0}</p>
+
+                    ${data.toc_output ? `
+                        <h3 style="margin-top: 1.5rem;">📑 Table of Contents</h3>
+                        <pre style="background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto;">${formatJSON(data.toc_output)}</pre>
+                    ` : ''}
+
+                    ${data.summary_output ? `
+                        <h3 style="margin-top: 1.5rem;">📄 Clinical Summary</h3>
+                        <pre style="background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto;">${formatJSON(data.summary_output)}</pre>
+                    ` : ''}
+
+                    ${data.recommendation_output ? `
+                        <h3 style="margin-top: 1.5rem;">💊 Treatment Recommendations</h3>
+                        <pre style="background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto;">${formatJSON(data.recommendation_output)}</pre>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        function formatJSON(jsonString) {
+            try {
+                const parsed = JSON.parse(jsonString);
+                return JSON.stringify(parsed, null, 2);
+            } catch (e) {
+                return jsonString; // Return raw if parsing fails
+            }
+        }
+    </script>
+</body>
+</html>

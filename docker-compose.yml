@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+      - ./scripts/init-ollama.sh:/init-ollama.sh
+    environment:
+      - OLLAMA_NUM_GPU=4  # Enable tensor parallelism across 4 GPUs
+      - OLLAMA_MODEL=gpt-oss:20b
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        /bin/ollama serve &
+        sleep 5
+        ollama pull $$OLLAMA_MODEL || true
+        wait
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all  # Use all 4 GPUs
+              capabilities: [gpu]
+
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: chromadb
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    restart: unless-stopped
+
+  webapp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: webapp
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    environment:
+      # Override for Docker internal networking
+      - OLLAMA_HOST=http://ollama:11434
+      - CHROMA_HOST=http://chromadb:8000
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+      - ./.data:/app/.data
+    depends_on:
+      - ollama
+      - chromadb
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+  chroma_data:

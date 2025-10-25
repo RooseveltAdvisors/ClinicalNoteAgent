@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Observability Dashboard - Clinical Notes Agent</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📊 Agent Observability Dashboard</h1>
+            <p>Session ID: <code>{{ session_id }}</code></p>
+            <a href="/" class="btn-secondary">← New Upload</a>
+        </header>
+
+        <main class="observability-layout">
+            <!-- Left Panel: Agent Activity Timeline -->
+            <div class="activity-panel">
+                <h2>Agent Activity Timeline</h2>
+                <div id="activityTimeline" class="timeline">
+                    <div class="loading">Loading activity...</div>
+                </div>
+            </div>
+
+            <!-- Right Panel: Results -->
+            <div class="results-panel">
+                <h2>Processing Results</h2>
+                <div id="results" class="results-container">
+                    <div class="loading">Loading results...</div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Agent Chat Details Modal -->
+        <div id="chatModal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h3>Agent Conversation</h3>
+                <div id="chatContent"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const sessionId = '{{ session_id }}';
+        let activityData = [];
+        let resultsData = null;
+
+        // Agent color coding
+        const agentColors = {
+            'System': '#6c757d',
+            'toc_agent': '#007bff',
+            'summary_agent': '#28a745',
+            'recommendation_agent': '#ffc107',
+            'evaluator_agent': '#dc3545'
+        };
+
+        // Safe JSON formatter with error handling
+        function formatOutput(output) {
+            if (!output) return '<em>No output</em>';
+
+            try {
+                const parsed = JSON.parse(output);
+                return JSON.stringify(parsed, null, 2);
+            } catch (e) {
+                // If parsing fails, show raw output with error indicator
+                return `<span style="color: #dc3545;">⚠️ Raw Output (JSON parsing failed):</span>\n${output}`;
+            }
+        }
+
+        // Fetch activity data
+        async function fetchActivity() {
+            try {
+                const response = await fetch(`/activity/${sessionId}`);
+                const data = await response.json();
+                activityData = data.activities || [];
+                renderActivity();
+            } catch (error) {
+                document.getElementById('activityTimeline').innerHTML =
+                    `<p class="error">Error loading activity: ${error.message}</p>`;
+            }
+        }
+
+        // Fetch results data
+        async function fetchResults() {
+            try {
+                const response = await fetch(`/results/${sessionId}`);
+                if (!response.ok) {
+                    throw new Error('Results not yet available');
+                }
+                resultsData = await response.json();
+                renderResults();
+            } catch (error) {
+                document.getElementById('results').innerHTML =
+                    `<p class="info">Results will appear when processing completes...</p>
+                     <button onclick="fetchResults()" class="btn-secondary">Refresh</button>`;
+            }
+        }
+
+        // Render activity timeline
+        function renderActivity() {
+            const timeline = document.getElementById('activityTimeline');
+
+            if (activityData.length === 0) {
+                timeline.innerHTML = '<p class="info">No activity yet. Waiting for processing to start...</p>';
+                return;
+            }
+
+            timeline.innerHTML = activityData.map((activity, index) => {
+                const color = agentColors[activity.agent] || '#333';
+                const timestamp = new Date(activity.timestamp).toLocaleTimeString();
+
+                let content = '';
+                let icon = '';
+
+                switch (activity.type) {
+                    case 'message':
+                        icon = '💬';
+                        content = `<strong>Message:</strong> ${escapeHtml(activity.content)}`;
+                        break;
+                    case 'tool_call':
+                        icon = '🔧';
+                        content = `<strong>Tool Call:</strong> ${escapeHtml(activity.content)}`;
+                        if (activity.metadata && activity.metadata.tool_name) {
+                            content += `<br><code>${activity.metadata.tool_name}</code>`;
+                        }
+                        break;
+                    case 'tool_result':
+                        icon = '✓';
+                        content = `<strong>Tool Result:</strong> ${escapeHtml(activity.content).substring(0, 200)}...`;
+                        break;
+                    case 'state_update':
+                        icon = '📝';
+                        content = `<strong>State Update:</strong> ${escapeHtml(activity.content)}`;
+                        break;
+                    case 'error':
+                        icon = '❌';
+                        content = `<strong>Error:</strong> ${escapeHtml(activity.content)}`;
+                        break;
+                    case 'system':
+                        icon = 'ℹ️';
+                        content = escapeHtml(activity.content);
+                        break;
+                    default:
+                        icon = '•';
+                        content = escapeHtml(activity.content);
+                }
+
+                return `
+                    <div class="timeline-item" data-index="${index}">
+                        <div class="timeline-marker" style="background-color: ${color};"></div>
+                        <div class="timeline-content">
+                            <div class="timeline-header">
+                                <span class="agent-badge" style="background-color: ${color};">
+                                    ${icon} ${activity.agent}
+                                </span>
+                                <span class="timestamp">${timestamp}</span>
+                            </div>
+                            <div class="timeline-body">
+                                ${content}
+                            </div>
+                            ${activity.metadata && Object.keys(activity.metadata).length > 0 ?
+                                `<details class="metadata">
+                                    <summary>Metadata</summary>
+                                    <pre>${JSON.stringify(activity.metadata, null, 2)}</pre>
+                                </details>` : ''
+                            }
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Auto-scroll to bottom
+            timeline.scrollTop = timeline.scrollHeight;
+        }
+
+        // Render results
+        function renderResults() {
+            const resultsContainer = document.getElementById('results');
+
+            if (!resultsData) {
+                return;
+            }
+
+            resultsContainer.innerHTML = `
+                <div class="result-section">
+                    <h3>Processing Status</h3>
+                    <div class="status-grid">
+                        <div class="status-item">
+                            <span class="label">Evaluation:</span>
+                            <span class="value ${resultsData.evaluation_status === 'pass' ? 'success' : 'warning'}">
+                                ${resultsData.evaluation_status || 'pending'}
+                            </span>
+                        </div>
+                        <div class="status-item">
+                            <span class="label">Iterations:</span>
+                            <span class="value">${resultsData.iteration_count || 0}</span>
+                        </div>
+                    </div>
+                </div>
+
+                ${resultsData.toc_output ? `
+                    <div class="result-section">
+                        <h3>📑 Table of Contents</h3>
+                        <pre class="json-output">${formatOutput(resultsData.toc_output)}</pre>
+                    </div>
+                ` : ''}
+
+                ${resultsData.summary_output ? `
+                    <div class="result-section">
+                        <h3>📄 Clinical Summary</h3>
+                        <pre class="json-output">${formatOutput(resultsData.summary_output)}</pre>
+                    </div>
+                ` : ''}
+
+                ${resultsData.recommendation_output ? `
+                    <div class="result-section">
+                        <h3>💊 Treatment Recommendations</h3>
+                        <pre class="json-output">${formatOutput(resultsData.recommendation_output)}</pre>
+                    </div>
+                ` : ''}
+
+                ${resultsData.quality_metrics ? `
+                    <div class="result-section">
+                        <h3>📊 Quality Metrics</h3>
+                        <pre class="json-output">${JSON.stringify(resultsData.quality_metrics, null, 2)}</pre>
+                    </div>
+                ` : ''}
+
+                <div class="result-actions">
+                    <button onclick="downloadResults()" class="btn-primary">Download JSON</button>
+                    <button onclick="location.href='/'" class="btn-secondary">Process Another Note</button>
+                </div>
+            `;
+        }
+
+        // Download results as JSON
+        function downloadResults() {
+            const dataStr = JSON.stringify(resultsData, null, 2);
+            const dataBlob = new Blob([dataStr], {type: 'application/json'});
+            const url = URL.createObjectURL(dataBlob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `clinical_notes_${sessionId}.json`;
+            link.click();
+        }
+
+        // Escape HTML to prevent XSS
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Auto-refresh activity every 2 seconds
+        let refreshInterval;
+        function startAutoRefresh() {
+            refreshInterval = setInterval(() => {
+                fetchActivity();
+                if (!resultsData) {
+                    fetchResults();
+                }
+            }, 2000);
+        }
+
+        function stopAutoRefresh() {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+            }
+        }
+
+        // Initial load
+        fetchActivity();
+        fetchResults();
+        startAutoRefresh();
+
+        // Stop refresh when page is hidden
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                stopAutoRefresh();
+            } else {
+                startAutoRefresh();
+            }
+        });
+    </script>
+</body>
+</html>

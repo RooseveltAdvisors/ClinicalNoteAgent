@@ -1,0 +1,12 @@
+[project]
+name = "contextual-chunking"
+version = "0.1.0"
+description = "Contextual Retrieval chunking skill for RAG"
+requires-python = ">=3.8"
+dependencies = [
+    "tiktoken>=0.5.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

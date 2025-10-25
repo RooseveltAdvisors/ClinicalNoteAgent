@@ -1,0 +1,10 @@
+[project]
+name = "rag-retrieval"
+version = "0.1.0"
+description = "Clinical notes processing skill"
+requires-python = ">=3.8"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
