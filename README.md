@@ -6,6 +6,10 @@
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/docker-20.10+-blue.svg)](https://www.docker.com/)
 
+## Demo
+
+![Clinical Notes Agent Demo](docs/demo.gif)
+
 ## Overview
 
 This system processes clinical notes through a multi-agent workflow powered by **gpt-oss:20b** running locally via Ollama. It generates:
